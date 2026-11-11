@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  testes:
+    name: Testes e estilo (PHP 8.4)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+
+      - name: Dependências
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Ambiente
+        run: cp .env.example .env && php artisan key:generate
+
+      - name: Estilo (Pint)
+        run: vendor/bin/pint --test
+
+      - name: Testes
+        run: php artisan test
+
+  fluxo:
+    name: Fluxo pela API, com o servidor no ar
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+
+      - name: Prepara o banco com os dados de demonstração
+        run: |
+          composer install --no-interaction --prefer-dist --no-progress
+          cp .env.example .env && php artisan key:generate
+          touch database/database.sqlite
+          php artisan migrate --force
+          php artisan db:seed --force
+
+      - name: Sobe o servidor
+        run: |
+          php artisan serve --port=8000 > servidor.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://localhost:8000/up > /dev/null && exit 0; sleep 1; done
+          cat servidor.log; exit 1
+
+      - name: Solicitante abre um chamado e não vê o de outra pessoa
+        run: |
+          set -e
+          token() { curl -sf -X POST http://localhost:8000/api/tokens -H 'Accept: application/json' -H 'Content-Type: application/json' -d "{\"email\":\"$1\",\"senha\":\"password\"}" | jq -r .token; }
+          SOLICITANTE=$(token solicitante@exemplo.test)
+          ATENDENTE=$(token atendente@exemplo.test)
+
+          status=$(curl -s -D cabecalhos.txt -o criado.json -w '%{http_code}' -X POST http://localhost:8000/api/chamados \
+            -H 'Accept: application/json' -H 'Content-Type: application/json' -H "Authorization: Bearer $SOLICITANTE" \
+            -d '{"titulo":"Teste do CI","descricao":"Aberto pela pipeline."}')
+          cat criado.json; echo
+          test "$status" = "201"
+          grep -qi '^Location: .*/api/chamados/' cabecalhos.txt
+
+          # Um chamado que não é dele: o primeiro do atendente na lista geral que tenha outro dono.
+          ID_ME=$(jq -r .data.solicitante.id criado.json)
+          ALHEIO=$(curl -sf http://localhost:8000/api/chamados -H 'Accept: application/json' -H "Authorization: Bearer $ATENDENTE" \
+            | jq -r --argjson eu "$ID_ME" '[.data[] | select(.solicitante.id != $eu)][0].id')
+          test "$ALHEIO" != "null"
+
+          status=$(curl -s -o alheio.json -w '%{http_code}' http://localhost:8000/api/chamados/$ALHEIO \
+            -H 'Accept: application/json' -H "Authorization: Bearer $SOLICITANTE")
+          status_inexistente=$(curl -s -o inexistente.json -w '%{http_code}' http://localhost:8000/api/chamados/999999 \
+            -H 'Accept: application/json' -H "Authorization: Bearer $SOLICITANTE")
+          test "$status" = "404" && test "$status_inexistente" = "404"
+          cmp alheio.json inexistente.json && echo "Chamado alheio e inexistente: mesma resposta, byte a byte"
