@@ -92,7 +92,7 @@ jobs:
             -H "Authorization: Bearer $SOLICITANTE" -d '{"titulo":"Fluxo do CI","descricao":"Assumido pela pipeline."}' | jq -r .data.id)
 
           curl -sf -X POST http://localhost:8000/api/chamados/$ID/acoes/assumir -H 'Accept: application/json' -H "Authorization: Bearer $ATENDENTE" \
-            | jq -e '.data.estado == "em_atendimento" and .data.versao == 1'
+            | jq -e '.data.estado == "em_atendimento" and .data.versao == 1 and .data.sla.resolucao.relogio == "correndo" and .data.sla.primeira_resposta.respondida_em != null'
 
           status=$(curl -s -o resolver.json -w '%{http_code}' -X POST http://localhost:8000/api/chamados/$ID/acoes/resolver \
             -H 'Accept: application/json' -H "Authorization: Bearer $SOLICITANTE")
