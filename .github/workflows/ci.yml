@@ -48,9 +48,9 @@ jobs:
           php artisan migrate --force
           php artisan db:seed --force
 
-      - name: Sobe o servidor
+      - name: Sobe o servidor, com 10 processos para atender em paralelo
         run: |
-          php artisan serve --port=8000 > servidor.log 2>&1 &
+          PHP_CLI_SERVER_WORKERS=10 php artisan serve --port=8000 > servidor.log 2>&1 &
           for i in $(seq 1 30); do curl -sf http://localhost:8000/up > /dev/null && exit 0; sleep 1; done
           cat servidor.log; exit 1
 
@@ -80,3 +80,40 @@ jobs:
             -H 'Accept: application/json' -H "Authorization: Bearer $SOLICITANTE")
           test "$status" = "404" && test "$status_inexistente" = "404"
           cmp alheio.json inexistente.json && echo "Chamado alheio e inexistente: mesma resposta, byte a byte"
+
+      - name: Atendente assume pela API, e o solicitante não consegue resolver
+        run: |
+          set -e
+          token() { curl -sf -X POST http://localhost:8000/api/tokens -H 'Accept: application/json' -H 'Content-Type: application/json' -d "{\"email\":\"$1\",\"senha\":\"password\"}" | jq -r .token; }
+          SOLICITANTE=$(token solicitante@exemplo.test)
+          ATENDENTE=$(token atendente@exemplo.test)
+          ID=$(curl -sf -X POST http://localhost:8000/api/chamados -H 'Accept: application/json' -H 'Content-Type: application/json' \
+            -H "Authorization: Bearer $SOLICITANTE" -d '{"titulo":"Fluxo do CI","descricao":"Assumido pela pipeline."}' | jq -r .data.id)
+
+          curl -sf -X POST http://localhost:8000/api/chamados/$ID/acoes/assumir -H 'Accept: application/json' -H "Authorization: Bearer $ATENDENTE" \
+            | jq -e '.data.estado == "em_atendimento" and .data.versao == 1'
+
+          status=$(curl -s -o resolver.json -w '%{http_code}' -X POST http://localhost:8000/api/chamados/$ID/acoes/resolver \
+            -H 'Accept: application/json' -H "Authorization: Bearer $SOLICITANTE")
+          cat resolver.json; echo
+          test "$status" = "403"
+
+      - name: Dez atendentes tentam assumir o mesmo chamado ao mesmo tempo
+        run: |
+          set -e
+          php artisan tinker --execute 'App\Models\User::factory()->atendente()->count(10)->sequence(fn ($s) => ["email" => "corrida{$s->index}@exemplo.test"])->create();'
+          token() { curl -sf -X POST http://localhost:8000/api/tokens -H 'Accept: application/json' -H 'Content-Type: application/json' -d "{\"email\":\"$1\",\"senha\":\"password\"}" | jq -r .token; }
+          for i in $(seq 0 9); do token corrida$i@exemplo.test > token$i; done
+          SOLICITANTE=$(token solicitante@exemplo.test)
+          ID=$(curl -sf -X POST http://localhost:8000/api/chamados -H 'Accept: application/json' -H 'Content-Type: application/json' \
+            -H "Authorization: Bearer $SOLICITANTE" -d '{"titulo":"Corrida do CI","descricao":"Dez atendentes ao mesmo tempo."}' | jq -r .data.id)
+
+          seq 0 9 | xargs -P 10 -I{} sh -c "curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:8000/api/chamados/$ID/acoes/assumir -H 'Accept: application/json' -H \"Authorization: Bearer \$(cat token{})\"" > codigos.txt
+
+          echo "Respostas (quantidade, código):"; sort codigos.txt | uniq -c
+          test "$(grep -c '^200$' codigos.txt)" = "1"
+          test "$(grep -cvE '^(200|409|422)$' codigos.txt || true)" = "0"
+
+          curl -sf http://localhost:8000/api/chamados/$ID -H 'Accept: application/json' -H "Authorization: Bearer $SOLICITANTE" \
+            | jq -e '.data.estado == "em_atendimento" and .data.versao == 1 and .data.atendente != null'
+          echo "Um só atendente ficou com o chamado, e a versão subiu uma vez só"
