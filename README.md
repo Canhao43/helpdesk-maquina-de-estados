@@ -12,8 +12,8 @@ API em Laravel de um helpdesk interno: quem tem um problema abre um chamado, que
 
 | Marco | O que entra | Estado |
 |---|---|---|
-| **M1** | Login por token, papéis (solicitante, atendente, admin), abrir e consultar chamados | 🟡 em revisão |
-| **M2** | Máquina de estados: transição inválida = `422`, sem permissão = `403`, dois atendentes ao mesmo tempo = `409` | — |
+| **M1** | Login por token, papéis (solicitante, atendente, admin), abrir e consultar chamados | ✅ |
+| **M2** | Máquina de estados: transição inválida = `422`, sem permissão = `403`, dois atendentes ao mesmo tempo = `409` | 🟡 em revisão |
 | **M3** | Histórico imutável de cada transição; tokens com escopo | — |
 | **M4** | SLA por prioridade, com o relógio parado enquanto se espera o solicitante | — |
 | **M5** | Registro de decisões e README final | — |
@@ -36,7 +36,7 @@ O `--seed` cria três usuários de demonstração, um por papel, todos com a sen
 
 Testes: `php artisan test`.
 
-## A API até aqui
+## A API
 
 | Método e caminho | Quem | O que faz |
 |---|---|---|
@@ -45,7 +45,42 @@ Testes: `php artisan test`.
 | `GET /api/eu` | logado | Quem é o dono do token, com o papel |
 | `POST /api/chamados` | logado | Abre um chamado. Responde `201` com `Location` |
 | `GET /api/chamados` | logado | Lista paginada. O solicitante vê só os próprios; atendente e admin veem todos |
-| `GET /api/chamados/{id}` | dono, atendente ou admin | Um chamado. O de outra pessoa responde `404`, igual a um inexistente |
+| `GET /api/chamados/{id}` | dono, atendente ou admin | Um chamado, com a `versao` e as `acoes_disponiveis` para quem pergunta. O de outra pessoa responde `404`, igual a um inexistente |
+| `POST /api/chamados/{id}/acoes/{acao}` | depende da ação (abaixo) | Executa uma transição e devolve o chamado atualizado |
+
+## A máquina de estados
+
+```mermaid
+stateDiagram-v2
+    [*] --> aberto
+    aberto --> em_atendimento: assumir
+    em_atendimento --> aberto: devolver_a_fila
+    em_atendimento --> aguardando_solicitante: pedir_informacao
+    aguardando_solicitante --> em_atendimento: responder
+    em_atendimento --> resolvido: resolver
+    resolvido --> em_atendimento: reabrir
+    resolvido --> fechado: fechar
+    aberto --> cancelado: cancelar
+    aguardando_solicitante --> cancelado: cancelar
+    fechado --> [*]
+    cancelado --> [*]
+```
+
+| Ação | Quem pode |
+|---|---|
+| `assumir` | atendente ou admin. Quem assume vira o atendente do chamado |
+| `devolver_a_fila`, `pedir_informacao`, `resolver` | o atendente do chamado, ou admin |
+| `responder`, `reabrir`, `fechar` | o solicitante, porque quem confirma que o problema acabou é quem tinha o problema |
+| `cancelar` | o solicitante ou admin, antes de alguém estar trabalhando no chamado |
+
+A tabela de transições mora num lugar só (`App\Enums\Acao`), e quem pode cada ação mora na policy. Toda mudança de estado passa pela `MaquinaDeEstados`, e o `estado` não está no `fillable`.
+
+**As respostas, nesta ordem:**
+
+1. **`404`** se o usuário não vê o chamado. Vem antes de tudo: um `403` ou um `422` confirmaria que o chamado existe.
+2. **`422`** se a ação não vale no estado atual. A resposta traz o estado e as `acoes_permitidas`, ou seja, o que esse usuário pode fazer agora.
+3. **`403`** se a ação vale no estado, mas não é desse usuário.
+4. **`409`** se o chamado mudou entre a leitura e a gravação. A gravação só acontece se a `versao` no banco ainda for a lida.
 
 ```bash
 TOKEN=$(curl -s -X POST localhost:8000/api/tokens -H 'Content-Type: application/json' \
@@ -67,6 +102,11 @@ curl -s -X POST localhost:8000/api/chamados -H "Authorization: Bearer $TOKEN" \
 | **Token do Sanctum com validade de 7 dias** | Token sem validade é credencial eterna se vazar | Sem validade (o padrão do Sanctum) |
 | **Login: mesma resposta e mesmo tempo para e-mail inexistente e senha errada** | Quem tenta não descobre quais e-mails têm conta. Sem conta, o hash não roda e a falha voltaria mais rápido: o relógio entregaria o que a mensagem esconde. A falha leva no mínimo 200 ms (`Timebox`, como no login de sessão do Laravel) | Mensagens diferentes, mais "amigáveis" · comparar com um hash falso, que amarra o tempo ao custo do bcrypt configurado |
 | **Limite de login por e-mail + IP** | Trava a força bruta de um IP contra uma conta, e o atacante não bloqueia o login da vítima, que vem de outro IP | Só por IP (bloqueia um escritório inteiro) · só por e-mail (o atacante tranca a vítima) |
-| **SQLite** | Um arquivo, sem servidor: quem clona roda em um minuto. Os testes usam SQLite em memória | MySQL, que pediria servidor ou Docker. A escolha é revista no M2, quando entra concorrência |
+| **SQLite, mantido no M2**, com espera de 5 s quando o banco está travado | A proteção contra corrida é a gravação condicional, que funciona igual em qualquer banco. O SQLite serializa as escritas, e o `busy_timeout` faz quem chega depois esperar em vez de falhar. O CI prova com 10 requisições ao mesmo tempo | MySQL, que pediria servidor ou Docker para provar o mesmo |
+| **Máquina de estados escrita à mão**: uma tabela no enum `Acao`, a permissão na policy | São 6 estados e 8 ações. A tabela inteira cabe numa tela e tem teste próprio: estado final sem saída, nenhum beco sem saída, todo estado alcançável | Pacote de máquina de estados (`spatie/laravel-model-states`), uma dependência para um problema pequeno |
+| **Ação como recurso: `POST /chamados/{id}/acoes/{acao}`** | Cada transição tem nome, regra e resposta próprias. Um `PATCH` com `{"estado": "resolvido"}` deixaria o cliente escolher o destino, e a API teria de descobrir que ação ele quis dizer | `PATCH` no campo `estado` |
+| **Ordem: `404` → `422` → `403` → `409`** | O `404` primeiro não vaza a existência. O estado antes da permissão dá a resposta mais útil: o atendente que tenta resolver um chamado ainda aberto recebe "assuma primeiro", e não "não é seu" | Permissão antes do estado: correto, mas o `403` esconderia o motivo real |
+| **Gravação condicional à `versao`, não ao `estado`** | O chamado pode sair do estado lido e voltar a ele com outro atendente: em atendimento com a Ana, devolvido, assumido pela Bia. O estado bate; a versão, não. Há teste desse caso | `WHERE estado = <lido>`, que deixaria a Ana resolver o chamado da Bia · trava pessimista (`SELECT ... FOR UPDATE`), que o SQLite não tem |
+| **`acoes_disponiveis` na resposta** | O cliente não reimplementa a máquina de estados para saber que botões mostrar | O cliente deduzir pelo estado e pelo papel |
 
-**Limites conhecidos:** o limite de login não segura ataque distribuído por muitos IPs. Token vencido continua na tabela até alguém rodar `php artisan sanctum:prune-expired`.
+**Limites conhecidos:** o limite de login não segura ataque distribuído por muitos IPs. Token vencido continua na tabela até alguém rodar `php artisan sanctum:prune-expired`. A proteção do `409` cobre a corrida dentro do servidor. Ainda não há `If-Match`: um cliente que decidiu olhando uma tela de dez minutos atrás não é avisado, se a ação ainda valer.
