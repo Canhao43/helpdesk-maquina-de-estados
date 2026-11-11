@@ -82,6 +82,8 @@ A tabela de transições mora num lugar só (`App\Enums\Acao`), e quem pode cada
 3. **`403`** se a ação vale no estado, mas não é desse usuário.
 4. **`409`** se o chamado mudou entre a leitura e a gravação. A gravação só acontece se a `versao` no banco ainda for a lida.
 
+**Medido no CI:** dez atendentes mandam `assumir` no mesmo chamado ao mesmo tempo, contra um servidor com dez processos. Na rodada do PR #2 vieram **1 × `200`, 3 × `409` e 6 × `422`**, sem nenhum `500`. Os `409` são requisições que leram o chamado antes da gravação do vencedor: a corrida aconteceu, e a gravação condicional a segurou. O número muda a cada rodada. O que o CI exige é exatamente um `200` e o chamado com um atendente só.
+
 ```bash
 TOKEN=$(curl -s -X POST localhost:8000/api/tokens -H 'Content-Type: application/json' \
   -d '{"email":"solicitante@exemplo.test","senha":"password"}' | jq -r .token)
