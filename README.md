@@ -1,58 +1,72 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Helpdesk com máquina de estados
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+[![CI](https://github.com/Canhao43/helpdesk-maquina-de-estados/actions/workflows/ci.yml/badge.svg)](https://github.com/Canhao43/helpdesk-maquina-de-estados/actions/workflows/ci.yml)
 
-## About Laravel
+API em Laravel de um helpdesk interno: quem tem um problema abre um chamado, quem atende trabalha a fila. O centro do projeto é a **máquina de estados** do chamado. Cada mudança de situação é uma transição com regra própria de quem pode fazer, e uma transição proibida nunca chega ao banco.
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+É um problema genérico, escrito do zero, e todo dado é fictício.
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+> Construído com agentes de IA (Claude Code) e revisado por mim em cada PR. As regras que os agentes seguem estão em [`CLAUDE.md`](CLAUDE.md).
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+## Roteiro
 
-## Learning Laravel
+| Marco | O que entra | Estado |
+|---|---|---|
+| **M1** | Login por token, papéis (solicitante, atendente, admin), abrir e consultar chamados | 🟡 em revisão |
+| **M2** | Máquina de estados: transição inválida = `422`, sem permissão = `403`, dois atendentes ao mesmo tempo = `409` | — |
+| **M3** | Histórico imutável de cada transição; tokens com escopo | — |
+| **M4** | SLA por prioridade, com o relógio parado enquanto se espera o solicitante | — |
+| **M5** | Registro de decisões e README final | — |
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+## Como rodar
 
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
-
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
-
-## Agentic Development
-
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+Precisa de PHP 8.4 e Composer.
 
 ```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+git clone https://github.com/Canhao43/helpdesk-maquina-de-estados.git
+cd helpdesk-maquina-de-estados
+composer install
+cp .env.example .env && php artisan key:generate
+touch database/database.sqlite
+php artisan migrate --seed
+php artisan serve
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+O `--seed` cria três usuários de demonstração, um por papel, todos com a senha `password`: `solicitante@exemplo.test`, `atendente@exemplo.test` e `admin@exemplo.test`. Em produção o seeder se recusa a rodar.
 
-## Contributing
+Testes: `php artisan test`.
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+## A API até aqui
 
-## Code of Conduct
+| Método e caminho | Quem | O que faz |
+|---|---|---|
+| `POST /api/tokens` | qualquer um | Troca e-mail e senha por um token (`Bearer`) que vale 7 dias. Cinco tentativas por minuto por e-mail e IP |
+| `DELETE /api/tokens/atual` | logado | Revoga o token usado na requisição |
+| `GET /api/eu` | logado | Quem é o dono do token, com o papel |
+| `POST /api/chamados` | logado | Abre um chamado. Responde `201` com `Location` |
+| `GET /api/chamados` | logado | Lista paginada. O solicitante vê só os próprios; atendente e admin veem todos |
+| `GET /api/chamados/{id}` | dono, atendente ou admin | Um chamado. O de outra pessoa responde `404`, igual a um inexistente |
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+```bash
+TOKEN=$(curl -s -X POST localhost:8000/api/tokens -H 'Content-Type: application/json' \
+  -d '{"email":"solicitante@exemplo.test","senha":"password"}' | jq -r .token)
 
-## Security Vulnerabilities
+curl -s -X POST localhost:8000/api/chamados -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -H 'Accept: application/json' \
+  -d '{"titulo":"Impressora não imprime","descricao":"A fila trava no primeiro documento."}'
+```
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+## Decisões até aqui
 
-## License
+| Decisão | Por quê | Descartado |
+|---|---|---|
+| **Chamado alheio responde `404`, não `403`** | Com `403`, quem testasse ids em sequência saberia quais existem. Todo `404` da API sai com o mesmo corpo, porque a mensagem padrão do Laravel diria o nome do model num caso e não no outro | `403`, que é "mais correto" e vaza a existência |
+| **Quem vê o quê na listagem é filtrado na consulta** (escopo `visiveisPara`) | Filtrar depois de buscar quebraria a paginação, e o total contaria chamados escondidos | Policy item a item na coleção |
+| **O dono do chamado é sempre o dono do token** | `solicitante_id`, `atendente_id` e `estado` ficam fora do `fillable`. Mandar esses campos no corpo não muda nada, e há teste disso | Confiar no corpo e validar depois |
+| **`papel` fora do `fillable` do usuário** | Nenhum dado vindo de requisição promove alguém a atendente ou admin | — |
+| **Token do Sanctum com validade de 7 dias** | Token sem validade é credencial eterna se vazar | Sem validade (o padrão do Sanctum) |
+| **Login: mesma resposta e mesmo tempo para e-mail inexistente e senha errada** | Quem tenta não descobre quais e-mails têm conta. Sem conta, o hash não roda e a falha voltaria mais rápido: o relógio entregaria o que a mensagem esconde. A falha leva no mínimo 200 ms (`Timebox`, como no login de sessão do Laravel) | Mensagens diferentes, mais "amigáveis" · comparar com um hash falso, que amarra o tempo ao custo do bcrypt configurado |
+| **Limite de login por e-mail + IP** | Trava a força bruta de um IP contra uma conta, e o atacante não bloqueia o login da vítima, que vem de outro IP | Só por IP (bloqueia um escritório inteiro) · só por e-mail (o atacante tranca a vítima) |
+| **SQLite** | Um arquivo, sem servidor: quem clona roda em um minuto. Os testes usam SQLite em memória | MySQL, que pediria servidor ou Docker. A escolha é revista no M2, quando entra concorrência |
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+**Limites conhecidos:** o limite de login não segura ataque distribuído por muitos IPs. Token vencido continua na tabela até alguém rodar `php artisan sanctum:prune-expired`.
