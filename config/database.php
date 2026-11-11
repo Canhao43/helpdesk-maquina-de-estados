@@ -38,7 +38,10 @@ return [
             'database' => env('DB_DATABASE', database_path('database.sqlite')),
             'prefix' => '',
             'foreign_key_constraints' => env('DB_FOREIGN_KEYS', true),
-            'busy_timeout' => null,
+            // Com várias requisições ao mesmo tempo, quem encontra o banco
+            // travado por uma escrita espera até 5 s, em vez de falhar na hora
+            // com "database is locked".
+            'busy_timeout' => 5000,
             'journal_mode' => null,
             'synchronous' => null,
             'transaction_mode' => 'DEFERRED',

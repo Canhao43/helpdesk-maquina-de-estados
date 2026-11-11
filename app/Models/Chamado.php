@@ -22,11 +22,20 @@ class Chamado extends Model
 
     protected $table = 'chamados';
 
+    /**
+     * O mesmo padrão do banco, para o chamado recém-criado já sair com a
+     * versão certa sem precisar ser lido de novo.
+     *
+     * @var array<string, mixed>
+     */
+    protected $attributes = ['versao' => 0];
+
     protected function casts(): array
     {
         return [
             'prioridade' => Prioridade::class,
             'estado' => EstadoChamado::class,
+            'versao' => 'integer',
         ];
     }
 
