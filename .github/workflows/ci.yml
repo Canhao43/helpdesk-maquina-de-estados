@@ -110,7 +110,7 @@ jobs:
             -H "Authorization: Bearer $SOLICITANTE" -d '{"titulo":"Corrida do CI","descricao":"Dez atendentes ao mesmo tempo."}' | jq -r .data.id)
 
           # Prova que o servidor está mesmo com vários processos, e não atendendo em fila.
-          ! grep -q "Unable to respect" servidor.log
+          if grep -q "Unable to respect" servidor.log; then echo "O servidor subiu com um processo só"; exit 1; fi
 
           seq 0 9 | xargs -P 10 -I{} sh -c "curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:8000/api/chamados/$ID/acoes/assumir -H 'Accept: application/json' -H \"Authorization: Bearer \$(cat token{})\"" > codigos.txt
 
