@@ -14,11 +14,15 @@ class MaquinaDeEstadosTest extends TestCase
 {
     use RefreshDatabase;
 
+    /**
+     * Sempre com comentário: aqui o assunto são as regras de estado e de
+     * permissão. A obrigatoriedade do comentário é testada no HistoricoTest.
+     */
     private function agir(User $quem, Chamado $chamado, string $acao): TestResponse
     {
         Sanctum::actingAs($quem);
 
-        return $this->postJson("/api/chamados/{$chamado->id}/acoes/{$acao}");
+        return $this->postJson("/api/chamados/{$chamado->id}/acoes/{$acao}", ['comentario' => 'Registrado pelo teste.']);
     }
 
     private function emAtendimentoPor(User $atendente): Chamado

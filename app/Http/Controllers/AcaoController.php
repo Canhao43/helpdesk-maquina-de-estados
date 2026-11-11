@@ -17,7 +17,9 @@ class AcaoController extends Controller
         // e não um 403 ou 422 que confirmaria que ele existe.
         Gate::authorize('view', $chamado);
 
-        $chamado = $maquina->executar($chamado, $acao, $request->user());
+        // O comentário vai cru: quem valida é a máquina, depois do estado e da
+        // permissão, para que um erro de comentário nunca responda antes deles.
+        $chamado = $maquina->executar($chamado, $acao, $request->user(), $request->input('comentario'));
 
         return new ChamadoResource($chamado->load(['solicitante', 'atendente']));
     }

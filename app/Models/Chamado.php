@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 // solicitante_id, atendente_id e estado ficam fora do fillable: quem abre é
 // sempre o dono do token, e estado só muda por transição (M2).
@@ -53,6 +54,17 @@ class Chamado extends Model
     public function atendente(): BelongsTo
     {
         return $this->belongsTo(User::class, 'atendente_id');
+    }
+
+    /**
+     * Em ordem de acontecimento. O id, e não a data, desempata dois eventos
+     * no mesmo segundo.
+     *
+     * @return HasMany<EventoDoChamado, $this>
+     */
+    public function eventos(): HasMany
+    {
+        return $this->hasMany(EventoDoChamado::class)->orderBy('id');
     }
 
     /**

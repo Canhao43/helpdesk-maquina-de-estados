@@ -16,6 +16,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::apiResource('chamados', ChamadoController::class)->only(['index', 'store', 'show']);
 
+    Route::get('/chamados/{chamado}/historico', [ChamadoController::class, 'historico'])->name('chamados.historico');
+
     // {acao} é o enum Acao: valor que não existe vira 404 já na rota.
     Route::post('/chamados/{chamado}/acoes/{acao}', AcaoController::class)->name('chamados.acoes');
 });
