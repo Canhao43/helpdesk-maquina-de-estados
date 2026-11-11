@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\ChamadoController;
 use App\Http\Controllers\TokenController;
 use App\Http\Resources\UsuarioResource;
 use Illuminate\Http\Request;
@@ -11,4 +12,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/tokens/atual', [TokenController::class, 'destroy']);
 
     Route::get('/eu', fn (Request $request) => new UsuarioResource($request->user()));
+
+    Route::apiResource('chamados', ChamadoController::class)->only(['index', 'store', 'show']);
 });
