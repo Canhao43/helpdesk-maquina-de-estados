@@ -42,6 +42,19 @@ class LoginTest extends TestCase
         $this->assertSame($senhaErrada->json(), $semConta->json());
     }
 
+    public function test_falha_de_login_leva_o_tempo_minimo_com_ou_sem_conta(): void
+    {
+        User::factory()->create(['email' => 'ana@exemplo.test']);
+
+        // Limite de baixo, e não comparação entre os dois tempos: é o que dá
+        // pra garantir sem o teste ficar instável.
+        foreach (['ana@exemplo.test', 'ninguem@exemplo.test'] as $email) {
+            $inicio = microtime(true);
+            $this->postJson('/api/tokens', ['email' => $email, 'senha' => 'errada'])->assertUnprocessable();
+            $this->assertGreaterThanOrEqual(0.2, microtime(true) - $inicio, "Falha rápida demais para {$email}");
+        }
+    }
+
     public function test_sem_token_nao_entra(): void
     {
         $this->getJson('/api/eu')->assertUnauthorized();

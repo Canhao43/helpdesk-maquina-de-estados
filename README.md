@@ -65,7 +65,7 @@ curl -s -X POST localhost:8000/api/chamados -H "Authorization: Bearer $TOKEN" \
 | **O dono do chamado é sempre o dono do token** | `solicitante_id`, `atendente_id` e `estado` ficam fora do `fillable`. Mandar esses campos no corpo não muda nada, e há teste disso | Confiar no corpo e validar depois |
 | **`papel` fora do `fillable` do usuário** | Nenhum dado vindo de requisição promove alguém a atendente ou admin | — |
 | **Token do Sanctum com validade de 7 dias** | Token sem validade é credencial eterna se vazar | Sem validade (o padrão do Sanctum) |
-| **Login: mesma resposta para e-mail inexistente e senha errada** | Quem tenta não descobre quais e-mails têm conta | Mensagens diferentes, mais "amigáveis" |
+| **Login: mesma resposta e mesmo tempo para e-mail inexistente e senha errada** | Quem tenta não descobre quais e-mails têm conta. Sem conta, o hash não roda e a falha voltaria mais rápido: o relógio entregaria o que a mensagem esconde. A falha leva no mínimo 200 ms (`Timebox`, como no login de sessão do Laravel) | Mensagens diferentes, mais "amigáveis" · comparar com um hash falso, que amarra o tempo ao custo do bcrypt configurado |
 | **Limite de login por e-mail + IP** | Trava a força bruta de um IP contra uma conta, e o atacante não bloqueia o login da vítima, que vem de outro IP | Só por IP (bloqueia um escritório inteiro) · só por e-mail (o atacante tranca a vítima) |
 | **SQLite** | Um arquivo, sem servidor: quem clona roda em um minuto. Os testes usam SQLite em memória | MySQL, que pediria servidor ou Docker. A escolha é revista no M2, quando entra concorrência |
 
