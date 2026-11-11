@@ -2,12 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\Escopo;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Timebox;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class TokenController extends Controller
@@ -22,6 +24,11 @@ class TokenController extends Controller
             'email' => ['required', 'string', 'email'],
             'senha' => ['required', 'string'],
             'dispositivo' => ['nullable', 'string', 'max:60'],
+            // Sem escopos, o token pode tudo o que o papel do dono deixa. Com
+            // escopos, só aquilo: um sistema que só abre chamado não precisa
+            // de um token que lê a fila inteira.
+            'escopos' => ['nullable', 'array', 'min:1'],
+            'escopos.*' => ['distinct', Rule::enum(Escopo::class)],
         ]);
 
         // E-mail inexistente e senha errada dão a mesma resposta, e no mesmo
@@ -47,13 +54,14 @@ class TokenController extends Controller
         // lembrar de revogar. Sete dias pedem um login por semana.
         $token = $usuario->createToken(
             $dados['dispositivo'] ?? 'api',
-            ['*'],
+            $dados['escopos'] ?? ['*'],
             now()->addDays(self::VALIDADE_EM_DIAS),
         );
 
         return response()->json([
             'token' => $token->plainTextToken,
             'tipo' => 'Bearer',
+            'escopos' => $token->accessToken->abilities,
             'expira_em' => $token->accessToken->expires_at?->toIso8601String(),
         ], Response::HTTP_CREATED);
     }

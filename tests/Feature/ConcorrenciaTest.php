@@ -34,7 +34,7 @@ class ConcorrenciaTest extends TestCase
             app(MaquinaDeEstados::class)->executar(Chamado::find($lido->id), Acao::Assumir, $bia);
         });
 
-        Sanctum::actingAs($ana);
+        Sanctum::actingAs($ana, ['*']);
         $this->postJson("/api/chamados/{$chamado->id}/acoes/assumir")->assertConflict();
 
         $this->assertTrue($interferiu);

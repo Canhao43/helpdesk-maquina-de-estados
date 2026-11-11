@@ -4,6 +4,8 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
+use Illuminate\Routing\Middleware\SubstituteBindings;
+use Laravel\Sanctum\Http\Middleware\CheckAbilities;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -14,7 +16,13 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        //
+        $middleware->alias(['escopo' => CheckAbilities::class]);
+
+        // O escopo é checado antes de o chamado ser buscado pelo id. Na ordem
+        // padrão, a busca vem antes: um token sem leitura receberia 404 num
+        // id inexistente e 403 num existente, e a diferença diria quais
+        // chamados existem.
+        $middleware->prependToPriorityList(before: SubstituteBindings::class, prepend: CheckAbilities::class);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(

@@ -23,14 +23,14 @@ class HistoricoTest extends TestCase
 
     private function agir(User $quem, Chamado $chamado, string $acao, ?string $comentario = null): TestResponse
     {
-        Sanctum::actingAs($quem);
+        Sanctum::actingAs($quem, ['*']);
 
         return $this->postJson("/api/chamados/{$chamado->id}/acoes/{$acao}", array_filter(['comentario' => $comentario]));
     }
 
     private function abrirPelaApi(User $solicitante): Chamado
     {
-        Sanctum::actingAs($solicitante);
+        Sanctum::actingAs($solicitante, ['*']);
         $id = $this->postJson('/api/chamados', ['titulo' => 'Sem rede', 'descricao' => 'O cabo está ligado.'])->json('data.id');
 
         return Chamado::findOrFail($id);
@@ -47,7 +47,7 @@ class HistoricoTest extends TestCase
         $this->agir($solicitante, $chamado, 'responder', 'Sala 12.')->assertOk();
         $this->agir($atendente, $chamado, 'resolver', 'Porta do switch trocada.')->assertOk();
 
-        Sanctum::actingAs($solicitante);
+        Sanctum::actingAs($solicitante, ['*']);
         $historico = $this->getJson("/api/chamados/{$chamado->id}/historico")->assertOk()->json('data');
 
         $this->assertSame(
@@ -86,7 +86,7 @@ class HistoricoTest extends TestCase
     public function test_quem_nao_ve_o_chamado_nao_ve_o_historico(): void
     {
         $chamado = Chamado::factory()->create();
-        Sanctum::actingAs(User::factory()->create());
+        Sanctum::actingAs(User::factory()->create(), ['*']);
 
         $this->getJson("/api/chamados/{$chamado->id}/historico")->assertNotFound();
     }

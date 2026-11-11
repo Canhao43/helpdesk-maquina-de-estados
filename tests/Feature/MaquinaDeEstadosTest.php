@@ -20,7 +20,7 @@ class MaquinaDeEstadosTest extends TestCase
      */
     private function agir(User $quem, Chamado $chamado, string $acao): TestResponse
     {
-        Sanctum::actingAs($quem);
+        Sanctum::actingAs($quem, ['*']);
 
         return $this->postJson("/api/chamados/{$chamado->id}/acoes/{$acao}", ['comentario' => 'Registrado pelo teste.']);
     }
@@ -163,13 +163,13 @@ class MaquinaDeEstadosTest extends TestCase
     {
         $chamado = Chamado::factory()->create();
 
-        Sanctum::actingAs($chamado->solicitante);
+        Sanctum::actingAs($chamado->solicitante, ['*']);
         $this->getJson("/api/chamados/{$chamado->id}")->assertJsonPath('data.acoes_disponiveis', ['cancelar']);
 
-        Sanctum::actingAs(User::factory()->atendente()->create());
+        Sanctum::actingAs(User::factory()->atendente()->create(), ['*']);
         $this->getJson("/api/chamados/{$chamado->id}")->assertJsonPath('data.acoes_disponiveis', ['assumir']);
 
-        Sanctum::actingAs(User::factory()->admin()->create());
+        Sanctum::actingAs(User::factory()->admin()->create(), ['*']);
         $this->getJson("/api/chamados/{$chamado->id}")->assertJsonPath('data.acoes_disponiveis', ['assumir', 'cancelar']);
     }
 }
