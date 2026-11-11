@@ -13,8 +13,8 @@ API em Laravel de um helpdesk interno: quem tem um problema abre um chamado, que
 | Marco | O que entra | Estado |
 |---|---|---|
 | **M1** | Login por token, papéis (solicitante, atendente, admin), abrir e consultar chamados | ✅ |
-| **M2** | Máquina de estados: transição inválida = `422`, sem permissão = `403`, dois atendentes ao mesmo tempo = `409` | 🟡 em revisão |
-| **M3** | Histórico imutável de cada transição; tokens com escopo | — |
+| **M2** | Máquina de estados: transição inválida = `422`, sem permissão = `403`, dois atendentes ao mesmo tempo = `409` | ✅ |
+| **M3** | Histórico imutável de cada transição; tokens com escopo | 🟡 em revisão |
 | **M4** | SLA por prioridade, com o relógio parado enquanto se espera o solicitante | — |
 | **M5** | Registro de decisões e README final | — |
 
@@ -38,15 +38,18 @@ Testes: `php artisan test`.
 
 ## A API
 
-| Método e caminho | Quem | O que faz |
-|---|---|---|
-| `POST /api/tokens` | qualquer um | Troca e-mail e senha por um token (`Bearer`) que vale 7 dias. Cinco tentativas por minuto por e-mail e IP |
-| `DELETE /api/tokens/atual` | logado | Revoga o token usado na requisição |
-| `GET /api/eu` | logado | Quem é o dono do token, com o papel |
-| `POST /api/chamados` | logado | Abre um chamado. Responde `201` com `Location` |
-| `GET /api/chamados` | logado | Lista paginada. O solicitante vê só os próprios; atendente e admin veem todos |
-| `GET /api/chamados/{id}` | dono, atendente ou admin | Um chamado, com a `versao` e as `acoes_disponiveis` para quem pergunta. O de outra pessoa responde `404`, igual a um inexistente |
-| `POST /api/chamados/{id}/acoes/{acao}` | depende da ação (abaixo) | Executa uma transição e devolve o chamado atualizado |
+| Método e caminho | Escopo do token | Quem | O que faz |
+|---|---|---|---|
+| `POST /api/tokens` | — | qualquer um | Troca e-mail e senha por um token (`Bearer`) que vale 7 dias. Aceita `escopos`; sem eles, o token pode tudo o que o papel deixa. Cinco tentativas por minuto por e-mail e IP |
+| `DELETE /api/tokens/atual` | — | logado | Revoga o token usado na requisição |
+| `GET /api/eu` | — | logado | Quem é o dono do token, com o papel e os escopos do token |
+| `POST /api/chamados` | `chamados:abrir` | logado | Abre um chamado. Responde `201` com `Location` |
+| `GET /api/chamados` | `chamados:ler` | logado | Lista paginada. O solicitante vê só os próprios; atendente e admin veem todos |
+| `GET /api/chamados/{id}` | `chamados:ler` | dono, atendente ou admin | Um chamado, com a `versao` e as `acoes_disponiveis` para quem pergunta. O de outra pessoa responde `404`, igual a um inexistente |
+| `GET /api/chamados/{id}/historico` | `chamados:ler` | dono, atendente ou admin | Tudo o que aconteceu com o chamado, em ordem: quem, qual ação, de que estado para qual, comentário e quando |
+| `POST /api/chamados/{id}/acoes/{acao}` | `chamados:agir` | depende da ação (abaixo) | Executa uma transição e devolve o chamado atualizado. Corpo: `{"comentario": "..."}`, obrigatório em `devolver_a_fila`, `pedir_informacao`, `responder`, `resolver` e `reabrir` |
+
+**Escopo é teto, não permissão.** Um token de integração criado com `"escopos": ["chamados:abrir"]` abre chamado e mais nada, mesmo que o dono seja admin. E um token de solicitante com `chamados:agir` continua sem poder assumir, porque quem decide isso é o papel, na policy.
 
 ## A máquina de estados
 
@@ -80,7 +83,16 @@ A tabela de transições mora num lugar só (`App\Enums\Acao`), e quem pode cada
 1. **`404`** se o usuário não vê o chamado. Vem antes de tudo: um `403` ou um `422` confirmaria que o chamado existe.
 2. **`422`** se a ação não vale no estado atual. A resposta traz o estado e as `acoes_permitidas`, ou seja, o que esse usuário pode fazer agora.
 3. **`403`** se a ação vale no estado, mas não é desse usuário.
-4. **`409`** se o chamado mudou entre a leitura e a gravação. A gravação só acontece se a `versao` no banco ainda for a lida.
+4. **`422`** de validação se falta o comentário que a ação exige. Vem depois da permissão: não adianta pedir comentário a quem não pode agir.
+5. **`409`** se o chamado mudou entre a leitura e a gravação. A gravação só acontece se a `versao` no banco ainda for a lida.
+
+Antes de tudo isso, o **escopo do token**: sem o escopo da rota, `403`. Ele é checado antes de o chamado ser buscado pelo id, porque, na ordem padrão do Laravel, um token sem leitura receberia `404` num id inexistente e `403` num existente.
+
+## O histórico
+
+Toda abertura e toda transição gravam um evento: autor, ação, estado anterior, estado novo e comentário. O evento é gravado **na mesma transação** da mudança de estado. Se o evento falha, a transição também não vale, e não existe mudança de estado sem rastro. Quem perde uma corrida (`409`) não deixa evento.
+
+O histórico só cresce. O model recusa `update` e `delete`, e o banco também: dois triggers abortam qualquer `UPDATE` ou `DELETE` na tabela, venha de onde vier. O CI confere isso com o `sqlite3`, direto no arquivo do banco.
 
 **Medido no CI:** dez atendentes mandam `assumir` no mesmo chamado ao mesmo tempo, contra um servidor com dez processos. Na rodada do PR #2 vieram **1 × `200`, 3 × `409` e 6 × `422`**, sem nenhum `500`. Os `409` são requisições que leram o chamado antes da gravação do vencedor: a corrida aconteceu, e a gravação condicional a segurou. O número muda a cada rodada. O que o CI exige é exatamente um `200` e o chamado com um atendente só.
 
@@ -110,5 +122,9 @@ curl -s -X POST localhost:8000/api/chamados -H "Authorization: Bearer $TOKEN" \
 | **Ordem: `404` → `422` → `403` → `409`** | O `404` primeiro não vaza a existência. O estado antes da permissão dá a resposta mais útil: o atendente que tenta resolver um chamado ainda aberto recebe "assuma primeiro", e não "não é seu" | Permissão antes do estado: correto, mas o `403` esconderia o motivo real |
 | **Gravação condicional à `versao`, não ao `estado`** | O chamado pode sair do estado lido e voltar a ele com outro atendente: em atendimento com a Ana, devolvido, assumido pela Bia. O estado bate; a versão, não. Há teste desse caso | `WHERE estado = <lido>`, que deixaria a Ana resolver o chamado da Bia · trava pessimista (`SELECT ... FOR UPDATE`), que o SQLite não tem |
 | **`acoes_disponiveis` na resposta** | O cliente não reimplementa a máquina de estados para saber que botões mostrar | O cliente deduzir pelo estado e pelo papel |
+| **Histórico imutável no banco, por trigger**, além do model | O model só protege quem passa por ele. Um `UPDATE` direto, um `tinker` ou outro sistema no mesmo banco passariam por cima | Só o model, que é o que o `integracao-erp-resiliente` tinha e deixou como pendência · usuário de banco só com `INSERT`, que pede um servidor de banco |
+| **Evento na mesma transação da transição** | Um chamado que mudou de estado sem evento é um histórico que mente | Gravar o evento depois, fora da transação · evento por *listener* de model, que roda fora do controle de quem chama |
+| **Comentário obrigatório onde a conversa muda** (pedir informação, responder, resolver, reabrir, devolver) | É o que o histórico precisa para fazer sentido daqui a um mês. Assumir, fechar e cancelar se explicam sozinhas | Comentário opcional em tudo |
+| **Escopos do Sanctum como teto**, com três escopos e `*` por padrão | O usuário que faz login no app não precisa escolher escopo. O sistema que só abre chamado recebe um token que não lê a fila | Um papel novo para "integração", que misturaria quem é com o que o token pode |
 
 **Limites conhecidos:** o limite de login não segura ataque distribuído por muitos IPs. Token vencido continua na tabela até alguém rodar `php artisan sanctum:prune-expired`. A proteção do `409` cobre a corrida dentro do servidor. Ainda não há `If-Match`: um cliente que decidiu olhando uma tela de dez minutos atrás não é avisado, se a ação ainda valer.

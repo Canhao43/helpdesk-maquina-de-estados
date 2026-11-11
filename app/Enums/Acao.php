@@ -48,4 +48,17 @@ enum Acao: string
     {
         return in_array($estado, $this->origens(), true);
     }
+
+    /**
+     * Ações que mudam a conversa precisam dizer por quê: o que falta, qual a
+     * resposta, qual a solução, por que voltou. Assumir, fechar e cancelar
+     * se explicam sozinhas.
+     */
+    public function exigeComentario(): bool
+    {
+        return match ($this) {
+            self::DevolverAFila, self::PedirInformacao, self::Responder, self::Resolver, self::Reabrir => true,
+            self::Assumir, self::Fechar, self::Cancelar => false,
+        };
+    }
 }

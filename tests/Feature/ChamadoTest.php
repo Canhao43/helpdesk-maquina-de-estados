@@ -15,7 +15,7 @@ class ChamadoTest extends TestCase
     public function test_abre_chamado_e_responde_201_com_location(): void
     {
         $solicitante = User::factory()->create();
-        Sanctum::actingAs($solicitante);
+        Sanctum::actingAs($solicitante, ['*']);
 
         $resposta = $this->postJson('/api/chamados', [
             'titulo' => 'Impressora do 3º andar não imprime',
@@ -35,7 +35,7 @@ class ChamadoTest extends TestCase
     {
         $solicitante = User::factory()->create();
         $outro = User::factory()->create();
-        Sanctum::actingAs($solicitante);
+        Sanctum::actingAs($solicitante, ['*']);
 
         $resposta = $this->postJson('/api/chamados', [
             'titulo' => 'Sem acesso ao e-mail',
@@ -53,7 +53,7 @@ class ChamadoTest extends TestCase
 
     public function test_prioridade_omitida_vira_media(): void
     {
-        Sanctum::actingAs(User::factory()->create());
+        Sanctum::actingAs(User::factory()->create(), ['*']);
 
         $this->postJson('/api/chamados', ['titulo' => 'Mouse quebrado', 'descricao' => 'Botão esquerdo falha.'])
             ->assertCreated()
@@ -62,7 +62,7 @@ class ChamadoTest extends TestCase
 
     public function test_valida_os_campos(): void
     {
-        Sanctum::actingAs(User::factory()->create());
+        Sanctum::actingAs(User::factory()->create(), ['*']);
 
         $this->postJson('/api/chamados', ['descricao' => str_repeat('a', 5001), 'prioridade' => 'urgentissima'])
             ->assertUnprocessable()
@@ -82,7 +82,7 @@ class ChamadoTest extends TestCase
         $solicitante = User::factory()->create();
         $meus = Chamado::factory()->count(2)->for($solicitante, 'solicitante')->create();
         Chamado::factory()->count(3)->create();
-        Sanctum::actingAs($solicitante);
+        Sanctum::actingAs($solicitante, ['*']);
 
         $resposta = $this->getJson('/api/chamados')->assertOk();
 
@@ -96,7 +96,7 @@ class ChamadoTest extends TestCase
         Chamado::factory()->count(3)->create();
 
         foreach ([User::factory()->atendente()->create(), User::factory()->admin()->create()] as $usuario) {
-            Sanctum::actingAs($usuario);
+            Sanctum::actingAs($usuario, ['*']);
             $this->getJson('/api/chamados')->assertOk()->assertJsonPath('meta.total', 3);
         }
     }
@@ -104,7 +104,7 @@ class ChamadoTest extends TestCase
     public function test_solicitante_ve_o_proprio_chamado(): void
     {
         $chamado = Chamado::factory()->create();
-        Sanctum::actingAs($chamado->solicitante);
+        Sanctum::actingAs($chamado->solicitante, ['*']);
 
         $this->getJson("/api/chamados/{$chamado->id}")->assertOk()->assertJsonPath('data.id', $chamado->id);
     }
@@ -112,7 +112,7 @@ class ChamadoTest extends TestCase
     public function test_chamado_de_outra_pessoa_responde_igual_a_inexistente(): void
     {
         $alheio = Chamado::factory()->create();
-        Sanctum::actingAs(User::factory()->create());
+        Sanctum::actingAs(User::factory()->create(), ['*']);
 
         $deOutro = $this->getJson("/api/chamados/{$alheio->id}");
         $inexistente = $this->getJson('/api/chamados/999999');
@@ -125,7 +125,7 @@ class ChamadoTest extends TestCase
     public function test_atendente_ve_chamado_de_qualquer_pessoa(): void
     {
         $chamado = Chamado::factory()->create();
-        Sanctum::actingAs(User::factory()->atendente()->create());
+        Sanctum::actingAs(User::factory()->atendente()->create(), ['*']);
 
         $this->getJson("/api/chamados/{$chamado->id}")->assertOk();
     }

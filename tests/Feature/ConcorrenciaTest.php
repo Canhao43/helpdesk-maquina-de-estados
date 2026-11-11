@@ -34,7 +34,7 @@ class ConcorrenciaTest extends TestCase
             app(MaquinaDeEstados::class)->executar(Chamado::find($lido->id), Acao::Assumir, $bia);
         });
 
-        Sanctum::actingAs($ana);
+        Sanctum::actingAs($ana, ['*']);
         $this->postJson("/api/chamados/{$chamado->id}/acoes/assumir")->assertConflict();
 
         $this->assertTrue($interferiu);
@@ -55,11 +55,11 @@ class ConcorrenciaTest extends TestCase
 
         // ...enquanto isso ele é devolvido e a Bia assume: o estado volta a ser
         // "em atendimento", mas o chamado agora é dela.
-        $maquina->executar(Chamado::find($chamado->id), Acao::DevolverAFila, $ana);
+        $maquina->executar(Chamado::find($chamado->id), Acao::DevolverAFila, $ana, 'Vou sair de férias.');
         $maquina->executar(Chamado::find($chamado->id), Acao::Assumir, $bia);
 
         // Comparar só o estado deixaria a Ana resolver o chamado da Bia.
-        $this->assertThrows(fn () => $maquina->executar($lidoPelaAna, Acao::Resolver, $ana), ChamadoMudouNoMeioDoCaminho::class);
+        $this->assertThrows(fn () => $maquina->executar($lidoPelaAna, Acao::Resolver, $ana, 'Resolvido.'), ChamadoMudouNoMeioDoCaminho::class);
 
         $this->assertSame(EstadoChamado::EmAtendimento, $chamado->fresh()->estado);
         $this->assertSame($bia->id, $chamado->fresh()->atendente_id);

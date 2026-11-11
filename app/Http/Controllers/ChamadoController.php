@@ -2,11 +2,11 @@
 
 namespace App\Http\Controllers;
 
-use App\Enums\EstadoChamado;
-use App\Enums\Prioridade;
 use App\Http\Requests\AbrirChamadoRequest;
 use App\Http\Resources\ChamadoResource;
+use App\Http\Resources\EventoResource;
 use App\Models\Chamado;
+use App\Services\MaquinaDeEstados;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -25,13 +25,9 @@ class ChamadoController extends Controller
         return ChamadoResource::collection($chamados);
     }
 
-    public function store(AbrirChamadoRequest $request): JsonResponse
+    public function store(AbrirChamadoRequest $request, MaquinaDeEstados $maquina): JsonResponse
     {
-        $chamado = new Chamado($request->validated());
-        $chamado->prioridade ??= Prioridade::Media;
-        $chamado->estado = EstadoChamado::Aberto;
-        $chamado->solicitante()->associate($request->user());
-        $chamado->save();
+        $chamado = $maquina->abrir($request->validated(), $request->user());
 
         return (new ChamadoResource($chamado->load(['solicitante', 'atendente'])))
             ->response()
@@ -44,5 +40,12 @@ class ChamadoController extends Controller
         Gate::authorize('view', $chamado);
 
         return new ChamadoResource($chamado->load(['solicitante', 'atendente']));
+    }
+
+    public function historico(Chamado $chamado): AnonymousResourceCollection
+    {
+        Gate::authorize('view', $chamado);
+
+        return EventoResource::collection($chamado->eventos()->with('autor')->get());
     }
 }

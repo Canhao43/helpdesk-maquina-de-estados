@@ -121,3 +121,32 @@ jobs:
           curl -sf http://localhost:8000/api/chamados/$ID -H 'Accept: application/json' -H "Authorization: Bearer $SOLICITANTE" \
             | jq -e '.data.estado == "em_atendimento" and .data.versao == 1 and .data.atendente != null'
           echo "Um só atendente ficou com o chamado, e a versão subiu uma vez só"
+
+      - name: Histórico pela API, e imutável até para o cliente do banco
+        run: |
+          set -e
+          token() { curl -sf -X POST http://localhost:8000/api/tokens -H 'Accept: application/json' -H 'Content-Type: application/json' -d "$1" | jq -r .token; }
+          SOLICITANTE=$(token '{"email":"solicitante@exemplo.test","senha":"password"}')
+          ATENDENTE=$(token '{"email":"atendente@exemplo.test","senha":"password"}')
+          ID=$(curl -sf -X POST http://localhost:8000/api/chamados -H 'Accept: application/json' -H 'Content-Type: application/json' \
+            -H "Authorization: Bearer $SOLICITANTE" -d '{"titulo":"Histórico do CI","descricao":"Dois eventos."}' | jq -r .data.id)
+          curl -sf -X POST http://localhost:8000/api/chamados/$ID/acoes/assumir -H 'Accept: application/json' -H "Authorization: Bearer $ATENDENTE" > /dev/null
+
+          curl -sf http://localhost:8000/api/chamados/$ID/historico -H 'Accept: application/json' -H "Authorization: Bearer $SOLICITANTE" \
+            | tee historico.json | jq -e '[.data[].acao] == ["abrir", "assumir"]'
+
+          if sqlite3 database/database.sqlite "UPDATE eventos_do_chamado SET comentario = 'reescrito'" 2> erro.txt; then
+            echo "O banco aceitou alterar o histórico"; exit 1
+          fi
+          cat erro.txt
+          test "$(sqlite3 database/database.sqlite "SELECT COUNT(*) FROM eventos_do_chamado WHERE comentario = 'reescrito'")" = "0"
+
+      - name: Token que só abre chamado não lê nenhum
+        run: |
+          set -e
+          TOKEN=$(curl -sf -X POST http://localhost:8000/api/tokens -H 'Accept: application/json' -H 'Content-Type: application/json' \
+            -d '{"email":"admin@exemplo.test","senha":"password","escopos":["chamados:abrir"]}' | jq -r .token)
+          ID=$(curl -sf -X POST http://localhost:8000/api/chamados -H 'Accept: application/json' -H 'Content-Type: application/json' \
+            -H "Authorization: Bearer $TOKEN" -d '{"titulo":"Alerta automático","descricao":"Aberto por integração."}' | jq -r .data.id)
+          status=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/chamados/$ID -H 'Accept: application/json' -H "Authorization: Bearer $TOKEN")
+          test "$status" = "403" && echo "Token de integração abriu o chamado $ID e não conseguiu lê-lo"
