@@ -4,6 +4,8 @@ namespace App\Models;
 
 use App\Enums\EstadoChamado;
 use App\Enums\Prioridade;
+use App\Sla\Marco;
+use Carbon\CarbonImmutable;
 use Database\Factories\ChamadoFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Scope;
@@ -65,6 +67,24 @@ class Chamado extends Model
     public function eventos(): HasMany
     {
         return $this->hasMany(EventoDoChamado::class)->orderBy('id');
+    }
+
+    /**
+     * A linha do tempo que a calculadora de SLA usa. Exige os eventos já
+     * carregados, para a listagem não fazer uma consulta por chamado.
+     *
+     * @return list<Marco>
+     */
+    public function marcosDoSla(): array
+    {
+        return $this->eventos
+            ->map(fn (EventoDoChamado $evento) => new Marco(
+                CarbonImmutable::instance($evento->created_at),
+                $evento->estado_novo,
+                $evento->acao,
+            ))
+            ->values()
+            ->all();
     }
 
     /**

@@ -21,6 +21,6 @@ class AcaoController extends Controller
         // permissão, para que um erro de comentário nunca responda antes deles.
         $chamado = $maquina->executar($chamado, $acao, $request->user(), $request->input('comentario'));
 
-        return new ChamadoResource($chamado->load(['solicitante', 'atendente']));
+        return new ChamadoResource($chamado->load(['solicitante', 'atendente', 'eventos']));
     }
 }

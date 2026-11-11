@@ -18,7 +18,7 @@ class ChamadoController extends Controller
     {
         $chamados = Chamado::query()
             ->visiveisPara($request->user())
-            ->with(['solicitante', 'atendente'])
+            ->with(['solicitante', 'atendente', 'eventos'])
             ->latest('id')
             ->paginate(20);
 
@@ -29,7 +29,7 @@ class ChamadoController extends Controller
     {
         $chamado = $maquina->abrir($request->validated(), $request->user());
 
-        return (new ChamadoResource($chamado->load(['solicitante', 'atendente'])))
+        return (new ChamadoResource($chamado->load(['solicitante', 'atendente', 'eventos'])))
             ->response()
             ->setStatusCode(201)
             ->header('Location', route('chamados.show', $chamado));
@@ -39,7 +39,7 @@ class ChamadoController extends Controller
     {
         Gate::authorize('view', $chamado);
 
-        return new ChamadoResource($chamado->load(['solicitante', 'atendente']));
+        return new ChamadoResource($chamado->load(['solicitante', 'atendente', 'eventos']));
     }
 
     public function historico(Chamado $chamado): AnonymousResourceCollection

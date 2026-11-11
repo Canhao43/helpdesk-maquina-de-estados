@@ -4,6 +4,8 @@ namespace App\Http\Resources;
 
 use App\Models\Chamado;
 use App\Services\MaquinaDeEstados;
+use App\Sla\CalculadoraDeSla;
+use Carbon\CarbonImmutable;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -29,6 +31,9 @@ class ChamadoResource extends JsonResource
             'acoes_disponiveis' => app(MaquinaDeEstados::class)->acoesDisponiveis($this->resource, $request->user()),
             'solicitante' => ['id' => $this->solicitante->id, 'nome' => $this->solicitante->name],
             'atendente' => $this->atendente ? ['id' => $this->atendente->id, 'nome' => $this->atendente->name] : null,
+            'sla' => $this->whenLoaded('eventos', fn () => app(CalculadoraDeSla::class)
+                ->calcular($this->prioridade, $this->resource->marcosDoSla(), CarbonImmutable::now())
+                ?->paraArray()),
             'criado_em' => $this->created_at?->toIso8601String(),
             'atualizado_em' => $this->updated_at?->toIso8601String(),
         ];
