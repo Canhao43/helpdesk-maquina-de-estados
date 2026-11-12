@@ -15,8 +15,8 @@ API em Laravel de um helpdesk interno: quem tem um problema abre um chamado, que
 | **M1** | Login por token, papéis (solicitante, atendente, admin), abrir e consultar chamados | ✅ |
 | **M2** | Máquina de estados: transição inválida = `422`, sem permissão = `403`, dois atendentes ao mesmo tempo = `409` | ✅ |
 | **M3** | Histórico imutável de cada transição; tokens com escopo | ✅ |
-| **M4** | SLA por prioridade, com o relógio parado enquanto se espera o solicitante | 🟡 em revisão |
-| **M5** | Registro de decisões e README final | — |
+| **M4** | SLA por prioridade, com o relógio parado enquanto se espera o solicitante | ✅ |
+| **M5** | Registro de decisões ([19 ADRs](docs/decisoes/README.md), conferidos pelo build) e README final | 🟡 em revisão |
 
 ## Como rodar
 
@@ -131,7 +131,9 @@ Cada chamado traz o bloco `sla`:
 
 **O SLA não fica guardado. É recalculado do histórico** por uma classe pura (`App\Sla\CalculadoraDeSla`), que recebe a linha do tempo e o "agora", sem banco e sem relógio do sistema. O teste fixa os dois.
 
-## Decisões até aqui
+## Decisões
+
+O registro completo está em [`docs/decisoes`](docs/decisoes/README.md): 19 ADRs, cada um com as alternativas descartadas e o teste ou a etapa do CI que o prova. Um teste quebra o build se um ADR citar uma prova que não existe. Abaixo, o resumo.
 
 | Decisão | Por quê | Descartado |
 |---|---|---|
@@ -145,7 +147,7 @@ Cada chamado traz o bloco `sla`:
 | **SQLite, mantido no M2**, com espera de 5 s quando o banco está travado | A proteção contra corrida é a gravação condicional, que funciona igual em qualquer banco. O SQLite serializa as escritas, e o `busy_timeout` faz quem chega depois esperar em vez de falhar. O CI prova com 10 requisições ao mesmo tempo | MySQL, que pediria servidor ou Docker para provar o mesmo |
 | **Máquina de estados escrita à mão**: uma tabela no enum `Acao`, a permissão na policy | São 6 estados e 8 ações. A tabela inteira cabe numa tela e tem teste próprio: estado final sem saída, nenhum beco sem saída, todo estado alcançável | Pacote de máquina de estados (`spatie/laravel-model-states`), uma dependência para um problema pequeno |
 | **Ação como recurso: `POST /chamados/{id}/acoes/{acao}`** | Cada transição tem nome, regra e resposta próprias. Um `PATCH` com `{"estado": "resolvido"}` deixaria o cliente escolher o destino, e a API teria de descobrir que ação ele quis dizer | `PATCH` no campo `estado` |
-| **Ordem: `404` → `422` → `403` → `409`** | O `404` primeiro não vaza a existência. O estado antes da permissão dá a resposta mais útil: o atendente que tenta resolver um chamado ainda aberto recebe "assuma primeiro", e não "não é seu" | Permissão antes do estado: correto, mas o `403` esconderia o motivo real |
+| **Ordem: `404` → `422` → `403` → `422` de comentário → `409`** | O `404` primeiro não vaza a existência. O estado antes da permissão dá a resposta mais útil: o atendente que tenta resolver um chamado ainda aberto recebe "assuma primeiro", e não "não é seu" | Permissão antes do estado: correto, mas o `403` esconderia o motivo real |
 | **Gravação condicional à `versao`, não ao `estado`** | O chamado pode sair do estado lido e voltar a ele com outro atendente: em atendimento com a Ana, devolvido, assumido pela Bia. O estado bate; a versão, não. Há teste desse caso | `WHERE estado = <lido>`, que deixaria a Ana resolver o chamado da Bia · trava pessimista (`SELECT ... FOR UPDATE`), que o SQLite não tem |
 | **`acoes_disponiveis` na resposta** | O cliente não reimplementa a máquina de estados para saber que botões mostrar | O cliente deduzir pelo estado e pelo papel |
 | **Histórico imutável no banco, por trigger**, além do model | O model só protege quem passa por ele. Um `UPDATE` direto, um `tinker` ou outro sistema no mesmo banco passariam por cima | Só o model, que é o que o `integracao-erp-resiliente` tinha e deixou como pendência · usuário de banco só com `INSERT`, que pede um servidor de banco |
@@ -158,4 +160,16 @@ Cada chamado traz o bloco `sla`:
 | **Calculadora sem banco e sem relógio** | Recebe a linha do tempo e o "agora". O teste monta "aberto há 5 horas" sem esperar 5 horas | Ler `now()` lá dentro, o que obrigaria todo teste a mexer no relógio global |
 | **Eventos carregados junto da listagem** | O SLA de 20 chamados sai de uma consulta só de eventos. Há teste que conta as consultas | Buscar os eventos chamado a chamado |
 
-**Limites conhecidos:** o limite de login não segura ataque distribuído por muitos IPs. Token vencido continua na tabela até alguém rodar `php artisan sanctum:prune-expired`. A proteção do `409` cobre a corrida dentro do servidor. Ainda não há `If-Match`: um cliente que decidiu olhando uma tela de dez minutos atrás não é avisado, se a ação ainda valer. **Não dá para filtrar a listagem por "SLA estourado"**: filtrar depois de buscar quebraria a paginação, que é a lição da listagem no M1. Para isso, o vencimento teria de ficar gravado no banco, ao lado do cálculo. Chamado sem histórico, criado por fora da API, sai com `sla: null`.
+## Limites conhecidos
+
+- O limite de login não segura ataque distribuído por muitos IPs.
+- Token vencido continua na tabela até alguém rodar `php artisan sanctum:prune-expired`.
+- O `409` cobre a corrida dentro do servidor. Ainda não há `If-Match`: um cliente que decidiu olhando uma tela de dez minutos atrás não é avisado, se a ação ainda valer.
+- **Não dá para filtrar a listagem por "SLA estourado".** Filtrar depois de buscar quebraria a paginação, que é a lição da listagem no M1. Para isso, o vencimento teria de ficar gravado no banco, ao lado do cálculo.
+- Um chamado pode ficar aguardando o solicitante para sempre: não há fechamento automático.
+- Chamado sem histórico, criado por fora da API, sai com `sla: null`.
+- Os triggers do histórico são de SQLite. Em outro banco, seriam reescritos.
+
+## Licença
+
+[MIT](LICENSE).
