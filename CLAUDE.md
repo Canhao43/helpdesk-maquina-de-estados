@@ -21,6 +21,7 @@ Este projeto é construído com agentes de IA (Claude Code) e revisado por mim, 
 - Toda regra de acesso mora numa policy ou num escopo de consulta, nunca espalhada pelo controller.
 - Todo dado em teste e seed é fictício. Nenhum dado real, de pessoa ou de empresa.
 - Comentário explica o porquê, não o quê.
+- Decisão de arquitetura nova vira ADR em `docs/decisoes`, com a prova em "Como é verificado". Decisão que muda ganha ADR novo; o antigo não some.
 
 ## Não fazer
 
