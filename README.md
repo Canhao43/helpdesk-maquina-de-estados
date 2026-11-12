@@ -14,8 +14,8 @@ API em Laravel de um helpdesk interno: quem tem um problema abre um chamado, que
 |---|---|---|
 | **M1** | Login por token, papéis (solicitante, atendente, admin), abrir e consultar chamados | ✅ |
 | **M2** | Máquina de estados: transição inválida = `422`, sem permissão = `403`, dois atendentes ao mesmo tempo = `409` | ✅ |
-| **M3** | Histórico imutável de cada transição; tokens com escopo | 🟡 em revisão |
-| **M4** | SLA por prioridade, com o relógio parado enquanto se espera o solicitante | — |
+| **M3** | Histórico imutável de cada transição; tokens com escopo | ✅ |
+| **M4** | SLA por prioridade, com o relógio parado enquanto se espera o solicitante | 🟡 em revisão |
 | **M5** | Registro de decisões e README final | — |
 
 ## Como rodar
@@ -45,7 +45,7 @@ Testes: `php artisan test`.
 | `GET /api/eu` | — | logado | Quem é o dono do token, com o papel e os escopos do token |
 | `POST /api/chamados` | `chamados:abrir` | logado | Abre um chamado. Responde `201` com `Location` |
 | `GET /api/chamados` | `chamados:ler` | logado | Lista paginada. O solicitante vê só os próprios; atendente e admin veem todos |
-| `GET /api/chamados/{id}` | `chamados:ler` | dono, atendente ou admin | Um chamado, com a `versao` e as `acoes_disponiveis` para quem pergunta. O de outra pessoa responde `404`, igual a um inexistente |
+| `GET /api/chamados/{id}` | `chamados:ler` | dono, atendente ou admin | Um chamado, com a `versao`, as `acoes_disponiveis` para quem pergunta e o `sla`. O de outra pessoa responde `404`, igual a um inexistente |
 | `GET /api/chamados/{id}/historico` | `chamados:ler` | dono, atendente ou admin | Tudo o que aconteceu com o chamado, em ordem: quem, qual ação, de que estado para qual, comentário e quando |
 | `POST /api/chamados/{id}/acoes/{acao}` | `chamados:agir` | depende da ação (abaixo) | Executa uma transição e devolve o chamado atualizado. Corpo: `{"comentario": "..."}`, obrigatório em `devolver_a_fila`, `pedir_informacao`, `responder`, `resolver` e `reabrir` |
 
@@ -88,12 +88,6 @@ A tabela de transições mora num lugar só (`App\Enums\Acao`), e quem pode cada
 
 Antes de tudo isso, o **escopo do token**: sem o escopo da rota, `403`. Ele é checado antes de o chamado ser buscado pelo id, porque, na ordem padrão do Laravel, um token sem leitura receberia `404` num id inexistente e `403` num existente.
 
-## O histórico
-
-Toda abertura e toda transição gravam um evento: autor, ação, estado anterior, estado novo e comentário. O evento é gravado **na mesma transação** da mudança de estado. Se o evento falha, a transição também não vale, e não existe mudança de estado sem rastro. Quem perde uma corrida (`409`) não deixa evento.
-
-O histórico só cresce. O model recusa `update` e `delete`, e o banco também: dois triggers abortam qualquer `UPDATE` ou `DELETE` na tabela, venha de onde vier. O CI confere isso com o `sqlite3`, direto no arquivo do banco.
-
 **Medido no CI:** dez atendentes mandam `assumir` no mesmo chamado ao mesmo tempo, contra um servidor com dez processos. Na rodada do PR #2 vieram **1 × `200`, 3 × `409` e 6 × `422`**, sem nenhum `500`. Os `409` são requisições que leram o chamado antes da gravação do vencedor: a corrida aconteceu, e a gravação condicional a segurou. O número muda a cada rodada. O que o CI exige é exatamente um `200` e o chamado com um atendente só.
 
 ```bash
@@ -104,6 +98,38 @@ curl -s -X POST localhost:8000/api/chamados -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' -H 'Accept: application/json' \
   -d '{"titulo":"Impressora não imprime","descricao":"A fila trava no primeiro documento."}'
 ```
+
+## O histórico
+
+Toda abertura e toda transição gravam um evento: autor, ação, estado anterior, estado novo e comentário. O evento é gravado **na mesma transação** da mudança de estado. Se o evento falha, a transição também não vale, e não existe mudança de estado sem rastro. Quem perde uma corrida (`409`) não deixa evento.
+
+O histórico só cresce. O model recusa `update` e `delete`, e o banco também: dois triggers abortam qualquer `UPDATE` ou `DELETE` na tabela, venha de onde vier. O CI confere isso com o `sqlite3`, direto no arquivo do banco.
+
+## O SLA
+
+Cada prioridade tem dois prazos, em horas corridas:
+
+| Prioridade | Primeira resposta (alguém assumir) | Resolução |
+|---|---|---|
+| `critica` | 30 min | 4 h |
+| `alta` | 2 h | 8 h |
+| `media` | 8 h | 24 h |
+| `baixa` | 24 h | 72 h |
+
+O relógio da resolução **só corre com o chamado aberto ou em atendimento**. Ele para enquanto se espera o solicitante e enquanto o chamado está resolvido. Se o chamado for reaberto, continua de onde parou. Fechado ou cancelado, ele congela. A primeira resposta é a primeira vez que alguém assume: devolver à fila e assumir de novo não recomeça esse prazo.
+
+Cada chamado traz o bloco `sla`:
+
+```json
+"sla": {
+  "primeira_resposta": { "limite_minutos": 480, "prazo_em": "...", "respondida_em": "...", "estourado": false },
+  "resolucao": { "limite_minutos": 1440, "consumido_minutos": 150, "relogio": "correndo", "vence_em": "...", "estourado": false }
+}
+```
+
+`vence_em` só existe com o relógio correndo: pausado, depende de quando o solicitante voltar.
+
+**O SLA não fica guardado. É recalculado do histórico** por uma classe pura (`App\Sla\CalculadoraDeSla`), que recebe a linha do tempo e o "agora", sem banco e sem relógio do sistema. O teste fixa os dois.
 
 ## Decisões até aqui
 
@@ -126,5 +152,10 @@ curl -s -X POST localhost:8000/api/chamados -H "Authorization: Bearer $TOKEN" \
 | **Evento na mesma transação da transição** | Um chamado que mudou de estado sem evento é um histórico que mente | Gravar o evento depois, fora da transação · evento por *listener* de model, que roda fora do controle de quem chama |
 | **Comentário obrigatório onde a conversa muda** (pedir informação, responder, resolver, reabrir, devolver) | É o que o histórico precisa para fazer sentido daqui a um mês. Assumir, fechar e cancelar se explicam sozinhas | Comentário opcional em tudo |
 | **Escopos do Sanctum como teto**, com três escopos e `*` por padrão | O usuário que faz login no app não precisa escolher escopo. O sistema que só abre chamado recebe um token que não lê a fila | Um papel novo para "integração", que misturaria quem é com o que o token pode |
+| **SLA calculado do histórico, não guardado** | Não existe contador para dessincronizar do que aconteceu. Uma regra nova, como outro estado pausando o relógio, vale também para o passado | Colunas `consumido` e `vence_em` atualizadas a cada transição: mais rápidas de consultar, mas são uma segunda verdade |
+| **Horas corridas** | Uma regra que cabe numa tabela e num teste | Horário comercial, que pede calendário de feriados, fuso e expediente: outro projeto |
+| **Prazos no enum `Prioridade`** | Mudam com deploy, ficam junto da prioridade e entram no teste como estão | Tabela no banco ou `.env`, para quando o cliente puder configurar |
+| **Calculadora sem banco e sem relógio** | Recebe a linha do tempo e o "agora". O teste monta "aberto há 5 horas" sem esperar 5 horas | Ler `now()` lá dentro, o que obrigaria todo teste a mexer no relógio global |
+| **Eventos carregados junto da listagem** | O SLA de 20 chamados sai de uma consulta só de eventos. Há teste que conta as consultas | Buscar os eventos chamado a chamado |
 
-**Limites conhecidos:** o limite de login não segura ataque distribuído por muitos IPs. Token vencido continua na tabela até alguém rodar `php artisan sanctum:prune-expired`. A proteção do `409` cobre a corrida dentro do servidor. Ainda não há `If-Match`: um cliente que decidiu olhando uma tela de dez minutos atrás não é avisado, se a ação ainda valer.
+**Limites conhecidos:** o limite de login não segura ataque distribuído por muitos IPs. Token vencido continua na tabela até alguém rodar `php artisan sanctum:prune-expired`. A proteção do `409` cobre a corrida dentro do servidor. Ainda não há `If-Match`: um cliente que decidiu olhando uma tela de dez minutos atrás não é avisado, se a ação ainda valer. **Não dá para filtrar a listagem por "SLA estourado"**: filtrar depois de buscar quebraria a paginação, que é a lição da listagem no M1. Para isso, o vencimento teria de ficar gravado no banco, ao lado do cálculo. Chamado sem histórico, criado por fora da API, sai com `sla: null`.
